@@ -201,6 +201,8 @@ def _extend_instr(opcode, arg):
     code.extend([opcode, arg_bytes.pop()])
     return code
 
+FRAME_CONST_IDX = -2
+CODE_MAGIC_IDX = 3
 def _resume(tb):
     """
     Main function for ON ERROR RESUME NEXT. Generate new callables for each frame in 'tb' and return the root callable.
@@ -211,10 +213,10 @@ def _resume(tb):
 
     if tb.tb_frame.f_code.co_code.startswith(bytes([NOP, MAGIC, NOP])):
         # We've patched this function before. Restore the original traceback frame which we squirrelled away.
-        tb_frame = tb.tb_frame.f_code.co_consts[-2]
+        tb_frame = tb.tb_frame.f_code.co_consts[FRAME_CONST_IDX]
 
         # Fix offets, which will include our patch prefix.
-        old_prefix_length = tb.tb_frame.f_code.co_code[3]
+        old_prefix_length = tb.tb_frame.f_code.co_code[CODE_MAGIC_IDX]
         faulting_instruction_idx = tb.tb_lasti - old_prefix_length
     else:
         tb_frame = tb.tb_frame
@@ -309,7 +311,7 @@ def _resume(tb):
     # We've finished adding code to the patch prefix, so store its length. We store it in the
     # otherwise-unused argument slot to the NOP opcode (in recent CPython versions, every opcode
     # has an argument slot).
-    prefix_code[3] = len(prefix_code)
+    prefix_code[CODE_MAGIC_IDX] = len(prefix_code)
 
     # The new code is the previous code plus our prefix.
     code_bytes = prefix_code + code_bytes
