@@ -255,17 +255,24 @@ def _resume(tb):
 
     if old_code_obj.co_varnames:
         # It's something which has a distinct locals() (i.e. a function). Supply them as arguments.
-        argcount = len(tb_frame.f_locals)
-        args = [val for key, val in sorted(tb_frame.f_locals.items())]
+        argcount = len(tb_frame.f_code.co_varnames)
+        args = [tb_frame.f_locals.get(name) for name in tb_frame.f_code.co_varnames]
     else:
         # It's something else (e.g. a module). Don't supply locals.
         argcount = 0
         args = []
 
-    # Restore the value stack. The interpreter doesn't record the value stack depth in a very accessible way (it's a
-    # local variable on the C stack in ceval.c), so figure out the depth of the stack using abstract interpretation.
-    stack_depth = _get_value_stack_depth(code_bytes, faulting_instruction_idx)
-    stack = _fetch_value_stack(tb_frame, stack_depth)
+    args.reverse()  # Args are written RTL.
+
+    if faulting_instruction_idx >= 0:
+        # Restore the value stack. The interpreter doesn't record the value stack depth in a very accessible way (it's a
+        # local variable on the C stack in ceval.c), so figure out the depth of the stack using abstract interpretation.
+        stack_depth = _get_value_stack_depth(code_bytes, faulting_instruction_idx)
+        stack = _fetch_value_stack(tb_frame, stack_depth)  # first entry is bottom of stack.
+    else:
+        # The exception is coming from inside the house^W^W^Wour fixup stub code.
+        print(tb.tb_lasti, faulting_instruction_idx, tb, tb.tb_next)
+        raise NotImplementedError()
 
     # Add some magic values as consts.
     co_consts = list(old_code_obj.co_consts)
@@ -282,11 +289,11 @@ def _resume(tb):
     co_consts.append(tb_frame)
 
     # Third magic const: the stack as a tuple.
-    if tb.tb_next and stack and isinstance(stack[0], ObliteratedByException):
+    if tb.tb_next and stack and isinstance(stack[-1], ObliteratedByException):
         # Normally the result of an exception is NULL, but in this case we know the last thing we did in this
         # frame involved a function call (because tb_next is not None), and we've called the function above
         # and have a result. We will restore the stack and then call the function.
-        stack = stack[1:]
+        stack = stack[:-1]
 
     co_consts.append(tuple(stack))
 
@@ -327,6 +334,7 @@ def _resume(tb):
                                   tuple(co_consts), old_code_obj.co_names, old_code_obj.co_varnames,
                                   old_code_obj.co_filename, old_code_obj.co_name, old_code_obj.co_firstlineno,
                                   old_code_obj.co_lnotab)
+
     # TODO: __closure__ not copied
     frame_func = types.FunctionType(new_code_obj, tb_frame.f_globals, name=tb_frame.f_code.co_name)
 
@@ -347,7 +355,7 @@ def _excepthook(type_, value, tb):
         except Exception as e:
             type_, value, tb = sys.exc_info()
             #print('continuing...')
-            #traceback.print_tb(tb)
+            #traceback.print_exc()
         else:
             break
 
